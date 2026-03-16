@@ -6,9 +6,10 @@ Encrypted wallet-to-wallet messaging. Send messages to any wallet — only the r
 
 ## How It Works
 
-1. **Register** — Sign a transaction to derive an encryption keypair, then publish your public key on-chain. Optionally set a username.
-2. **Send** — Look up the recipient's public key, encrypt the message with NaCl box (X25519 + XSalsa20-Poly1305), and send it as a 0-ALGO transaction note.
-3. **Receive** — Sign to derive the same keypair and decrypt incoming messages. Your keypair is cached in localStorage so you only sign once per session.
+1. **Browse** — View the public feed of all messages without connecting a wallet.
+2. **Register** — Connect your wallet and sign a transaction to derive an encryption keypair, then publish your public key on-chain. Optionally set a username.
+3. **Send** — Look up the recipient's public key, encrypt the message with NaCl box (X25519 + XSalsa20-Poly1305), and send it as a 0-ALGO transaction note.
+4. **Receive** — Sign to derive the same keypair and decrypt incoming messages. Your keypair is cached in localStorage so you only sign once per session.
 
 ### Encryption
 
