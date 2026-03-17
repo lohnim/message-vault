@@ -261,6 +261,108 @@ export async function fetchIncomingDMs(address: string, limit = 100) {
     .do()
 }
 
+/**
+ * Fetch DMs sent BY the given address (excludes registrations/posts sent to hub).
+ */
+export async function fetchSentDMs(address: string, limit = 100) {
+  const result = await indexerClient
+    .searchForTransactions()
+    .address(address)
+    .addressRole('sender')
+    .notePrefix(notePrefixBytes)
+    .txType('pay')
+    .limit(limit)
+    .do()
+
+  const txns = result.transactions || []
+  // Filter to only DMs (not registrations/posts sent to hub)
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const dmTxns = txns.filter((txn: any) => {
+    if (!txn.note) return false
+    const receiver = txn.paymentTransaction?.receiver ?? txn['payment-transaction']?.receiver
+    if (receiver === HUB_ADDRESS) return false
+    try {
+      const noteStr = decodeNote(txn.note)
+      if (!noteStr || !noteStr.startsWith('messagevault:')) return false
+      const parsed = JSON.parse(noteStr.slice('messagevault:'.length))
+      return parsed.type === 'dm'
+    } catch {
+      return false
+    }
+  })
+
+  return { ...result, transactions: dmTxns }
+}
+
+export interface ConversationMessage {
+  txId: string
+  sender: string
+  receiver: string
+  timestamp: number
+  direction: 'sent' | 'received'
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  payload: any
+}
+
+/**
+ * Fetch both incoming and outgoing DMs between two addresses, merged into a sorted timeline.
+ */
+export async function fetchConversation(myAddress: string, peerAddress: string): Promise<ConversationMessage[]> {
+  const [incomingResult, sentResult] = await Promise.all([
+    fetchIncomingDMs(myAddress, 200),
+    fetchSentDMs(myAddress, 200),
+  ])
+
+  const messages: ConversationMessage[] = []
+
+  // Process incoming: filter to only from peer
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  for (const txn of (incomingResult.transactions || []) as any[]) {
+    if (!txn.note || !txn.id) continue
+    if (txn.sender !== peerAddress) continue
+    try {
+      const noteStr = decodeNote(txn.note)
+      if (!noteStr || !noteStr.startsWith('messagevault:')) continue
+      const parsed = JSON.parse(noteStr.slice('messagevault:'.length))
+      if (parsed.type !== 'dm') continue
+      messages.push({
+        txId: txn.id,
+        sender: txn.sender,
+        receiver: myAddress,
+        timestamp: txn.roundTime ?? txn['round-time'] ?? 0,
+        direction: 'received',
+        payload: parsed,
+      })
+    } catch { continue }
+  }
+
+  // Process sent: filter to only to peer
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  for (const txn of (sentResult.transactions || []) as any[]) {
+    if (!txn.note || !txn.id) continue
+    const receiver = txn.paymentTransaction?.receiver ?? txn['payment-transaction']?.receiver
+    if (receiver !== peerAddress) continue
+    try {
+      const noteStr = decodeNote(txn.note)
+      if (!noteStr || !noteStr.startsWith('messagevault:')) continue
+      const parsed = JSON.parse(noteStr.slice('messagevault:'.length))
+      if (parsed.type !== 'dm') continue
+      messages.push({
+        txId: txn.id,
+        sender: myAddress,
+        receiver: peerAddress,
+        timestamp: txn.roundTime ?? txn['round-time'] ?? 0,
+        direction: 'sent',
+        payload: parsed,
+      })
+    } catch { continue }
+  }
+
+  // Sort chronologically (oldest first, like a chat)
+  messages.sort((a, b) => a.timestamp - b.timestamp)
+  return messages
+}
+
 export interface KnownContact {
   address: string
   name?: string
