@@ -5,16 +5,10 @@ import { useWallet } from '@txnlab/use-wallet-react'
 import nacl from 'tweetnacl'
 import algosdk from 'algosdk'
 import { algodClient, fetchConversation, fetchRegistration, type ConversationMessage } from '@/lib/algorand'
-import { decryptMessage, base64ToUint8, encryptForRegisteredKey } from '@/lib/crypto'
+import { decryptDM, encryptForPeer, encryptForRegisteredKey, loadKeypair } from '@/lib/crypto'
 import { shortenAddress, timeAgo } from '@/lib/types'
 
 const MAX_MESSAGE_LENGTH = 600
-
-interface JustSentMessage {
-  txId: string
-  text: string
-  timestamp: number
-}
 
 interface ChatViewProps {
   activeAddress: string
@@ -28,6 +22,7 @@ export default function ChatView({ activeAddress, peerAddress, keypair, onBack }
   const [messages, setMessages] = useState<ConversationMessage[]>([])
   const [loading, setLoading] = useState(true)
   const [peerName, setPeerName] = useState<string | null>(null)
+  const [peerPk, setPeerPk] = useState<string | null>(null)
   const [revealed, setRevealed] = useState<Set<string>>(new Set())
   const [copiedId, setCopiedId] = useState<string | null>(null)
 
@@ -35,7 +30,6 @@ export default function ChatView({ activeAddress, peerAddress, keypair, onBack }
   const [text, setText] = useState('')
   const [sending, setSending] = useState(false)
   const [sendError, setSendError] = useState<string | null>(null)
-  const [justSent, setJustSent] = useState<JustSentMessage[]>([])
 
   const timelineEndRef = useRef<HTMLDivElement>(null)
 
@@ -49,6 +43,7 @@ export default function ChatView({ activeAddress, peerAddress, keypair, onBack }
         ])
         setMessages(msgs)
         if (reg?.name) setPeerName(reg.name)
+        if (reg?.pk) setPeerPk(reg.pk)
       } catch {
         // silent
       } finally {
@@ -61,7 +56,7 @@ export default function ChatView({ activeAddress, peerAddress, keypair, onBack }
   // Scroll to bottom when messages change
   useEffect(() => {
     timelineEndRef.current?.scrollIntoView({ behavior: 'smooth' })
-  }, [messages, justSent])
+  }, [messages])
 
   function toggleReveal(txId: string) {
     setRevealed(prev => {
@@ -73,15 +68,14 @@ export default function ChatView({ activeAddress, peerAddress, keypair, onBack }
   }
 
   function decryptMsg(msg: ConversationMessage): string | null {
-    if (msg.direction === 'sent') return null
-    const { ct, n, ek } = msg.payload
-    if (!ct || !n || !ek) return null
-    return decryptMessage(
-      base64ToUint8(ct),
-      base64ToUint8(n),
-      base64ToUint8(ek),
-      keypair.secretKey
-    )
+    // For v2 messages, both sent and received can be decrypted via ECDH shared key
+    // For v1 sent messages, we can't decrypt (ephemeral key is lost)
+    const isV2 = msg.payload?.v === 2
+    if (msg.direction === 'sent' && !isV2) return null
+
+    // Determine peer public key for ECDH
+    const peerKey = peerPk || undefined
+    return decryptDM(msg.payload, keypair.secretKey, peerKey)
   }
 
   function handleCopy(e: React.MouseEvent, text: string, txId: string) {
@@ -99,7 +93,11 @@ export default function ChatView({ activeAddress, peerAddress, keypair, onBack }
       const reg = await fetchRegistration(peerAddress)
       if (!reg) throw new Error('Recipient has not enabled messaging yet.')
 
-      const note = encryptForRegisteredKey(text.trim(), reg.pk)
+      // Use ECDH v2 encryption if we have our keypair, otherwise fall back to v1
+      const localKp = loadKeypair(activeAddress)
+      const note = localKp
+        ? encryptForPeer(text.trim(), reg.pk, localKp.secretKey)
+        : encryptForRegisteredKey(text.trim(), reg.pk)
       if (note.length > 1024) throw new Error('Message too long for a single transaction note.')
 
       const suggestedParams = await algodClient.getTransactionParams().do()
@@ -113,15 +111,12 @@ export default function ChatView({ activeAddress, peerAddress, keypair, onBack }
 
       const atc = new algosdk.AtomicTransactionComposer()
       atc.addTransaction({ txn, signer: transactionSigner })
-      const result = await atc.execute(algodClient, 4)
+      await atc.execute(algodClient, 4)
 
-      const sentText = text.trim()
-      setJustSent(prev => [...prev, {
-        txId: result.txIDs[0],
-        text: sentText,
-        timestamp: Math.floor(Date.now() / 1000),
-      }])
       setText('')
+      // Reload conversation to show the new message
+      const msgs = await fetchConversation(activeAddress, peerAddress)
+      setMessages(msgs)
     } catch (err: unknown) {
       setSendError(err instanceof Error ? err.message : 'Failed to send')
     } finally {
@@ -136,8 +131,6 @@ export default function ChatView({ activeAddress, peerAddress, keypair, onBack }
     }
   }
 
-  // Merge on-chain sent messages with just-sent local messages
-  const justSentIds = new Set(justSent.map(js => js.txId))
 
   return (
     <div className="chat-view">
@@ -158,28 +151,24 @@ export default function ChatView({ activeAddress, peerAddress, keypair, onBack }
           </div>
         ) : (
           <>
-          {messages.length === 0 && justSent.length === 0 && (
+          {messages.length === 0 && (
             <div className="inbox-empty">
               <p>No messages yet. Start the conversation below.</p>
             </div>
           )}
           {messages.map(msg => {
             const isSent = msg.direction === 'sent'
+            const isV2 = msg.payload?.v === 2
             const bubbleClass = `chat-bubble ${isSent ? 'chat-bubble-sent' : 'chat-bubble-received'}`
             const isRevealed = revealed.has(msg.txId)
-            const decryptedText = isRevealed && !isSent ? decryptMsg(msg) : null
-
-            // If this is a sent message we just sent this session, show plaintext
-            const justSentMatch = justSentIds.has(msg.txId) ? justSent.find(js => js.txId === msg.txId) : null
+            const canDecryptSent = isSent && isV2
+            const decryptedText = (isRevealed && !isSent) || (isRevealed && canDecryptSent) ? decryptMsg(msg) : null
 
             return (
-              <div key={msg.txId} className={bubbleClass} onClick={() => !isSent && toggleReveal(msg.txId)}>
-                {isSent ? (
-                  justSentMatch ? (
-                    <div className="chat-just-sent">
-                      <pre className="message-code">{justSentMatch.text}</pre>
-                      <p className="chat-sent-hint">Visible to you this session only. It will appear as encrypted when you return.</p>
-                    </div>
+              <div key={msg.txId} className={bubbleClass} onClick={() => toggleReveal(msg.txId)}>
+                {isSent && !isRevealed ? (
+                  canDecryptSent ? (
+                    <p className="message-hidden">Click to reveal</p>
                   ) : (
                     <p className="chat-encrypted">[Encrypted message you sent]</p>
                   )
@@ -225,28 +214,6 @@ export default function ChatView({ activeAddress, peerAddress, keypair, onBack }
               </div>
             )
           })}
-
-          {/* Just-sent messages that haven't appeared on-chain yet */}
-          {justSent.filter(js => !messages.some(m => m.txId === js.txId)).map(js => (
-            <div key={js.txId} className="chat-bubble chat-bubble-sent">
-              <div className="chat-just-sent">
-                <pre className="message-code">{js.text}</pre>
-                <p className="chat-sent-hint">Visible to you this session only. It will appear as encrypted when you return.</p>
-              </div>
-              <div className="chat-bubble-meta">
-                <span className="chat-bubble-time">just now</span>
-                <a
-                  className="btn-action"
-                  href={`https://explorer.perawallet.app/tx/${js.txId}`}
-                  target="_blank"
-                  rel="noopener noreferrer"
-                  onClick={(e) => e.stopPropagation()}
-                >
-                  tx
-                </a>
-              </div>
-            </div>
-          ))}
 
           <div ref={timelineEndRef} />
         </>

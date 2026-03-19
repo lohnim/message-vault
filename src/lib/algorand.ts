@@ -1,4 +1,5 @@
 import algosdk from 'algosdk'
+import { fetchRegistrationFromContract, isRegistryConfigured } from './registry'
 
 const algodServer = process.env.NEXT_PUBLIC_ALGOD_SERVER || 'https://mainnet-api.algonode.cloud'
 const algodPort = process.env.NEXT_PUBLIC_ALGOD_PORT || '443'
@@ -71,9 +72,23 @@ export interface Registration {
 
 /**
  * Fetch the most recent registration for an address.
- * Returns the latest registration (users can re-register to update username).
+ * Tries smart contract box read first, falls back to hub-address indexer query.
  */
 export async function fetchRegistration(address: string): Promise<Registration | null> {
+  // Try contract first
+  if (isRegistryConfigured()) {
+    const contractReg = await fetchRegistrationFromContract(algodClient, address)
+    if (contractReg) return contractReg
+  }
+
+  // Fallback: hub-address indexer query (legacy registrations)
+  return fetchRegistrationFromHub(address)
+}
+
+/**
+ * Legacy: fetch registration from hub-address indexer query.
+ */
+async function fetchRegistrationFromHub(address: string): Promise<Registration | null> {
   try {
     let nextToken: string | undefined
     const MAX_PAGES = 10

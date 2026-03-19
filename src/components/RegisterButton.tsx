@@ -6,6 +6,7 @@ import algosdk from 'algosdk'
 import nacl from 'tweetnacl'
 import { algodClient, HUB_ADDRESS, fetchRegistration } from '@/lib/algorand'
 import { deriveEncryptionKeypair, encodeRegisterNote } from '@/lib/crypto'
+import { isRegistryConfigured, registerOnContract } from '@/lib/registry'
 
 interface Props {
   forceEdit?: boolean
@@ -70,20 +71,32 @@ export default function RegisterButton({ forceEdit, onEditDone }: Props) {
     setError(null)
     setStep('publishing')
     try {
-      const note = encodeRegisterNote(keypairRef.current.publicKey, username.trim() || undefined)
-      const suggestedParams = await algodClient.getTransactionParams().do()
+      if (isRegistryConfigured()) {
+        // Use smart contract registry
+        await registerOnContract(
+          algodClient,
+          transactionSigner,
+          activeAddress,
+          keypairRef.current.publicKey,
+          username.trim() || undefined
+        )
+      } else {
+        // Fallback: legacy hub-address registration
+        const note = encodeRegisterNote(keypairRef.current.publicKey, username.trim() || undefined)
+        const suggestedParams = await algodClient.getTransactionParams().do()
 
-      const txn = algosdk.makePaymentTxnWithSuggestedParamsFromObject({
-        sender: activeAddress,
-        receiver: HUB_ADDRESS,
-        amount: 0,
-        suggestedParams,
-        note,
-      })
+        const txn = algosdk.makePaymentTxnWithSuggestedParamsFromObject({
+          sender: activeAddress,
+          receiver: HUB_ADDRESS,
+          amount: 0,
+          suggestedParams,
+          note,
+        })
 
-      const atc = new algosdk.AtomicTransactionComposer()
-      atc.addTransaction({ txn, signer: transactionSigner })
-      await atc.execute(algodClient, 10)
+        const atc = new algosdk.AtomicTransactionComposer()
+        atc.addTransaction({ txn, signer: transactionSigner })
+        await atc.execute(algodClient, 10)
+      }
 
       setCurrentName(username.trim() || undefined)
       setRegistered(true)

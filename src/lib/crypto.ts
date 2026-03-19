@@ -162,6 +162,117 @@ export function clearKeypair(address: string) {
   localStorage.removeItem(STORAGE_KEY_PREFIX + address)
 }
 
+// --- ECDH Shared Key Encryption (v2) ---
+
+/** In-memory cache of derived shared keys to avoid recomputing per message */
+const sharedKeyCache = new Map<string, Uint8Array>()
+
+function sharedKeyCacheKey(theirPubKey: Uint8Array, mySecretKey: Uint8Array): string {
+  return uint8ToBase64(theirPubKey) + ':' + uint8ToBase64(mySecretKey)
+}
+
+/**
+ * Derive a shared symmetric key via X25519 ECDH (nacl.box.before).
+ * Result is cached in memory for the session.
+ */
+export function deriveSharedKey(theirPubKey: Uint8Array, mySecretKey: Uint8Array): Uint8Array {
+  const cacheKey = sharedKeyCacheKey(theirPubKey, mySecretKey)
+  const cached = sharedKeyCache.get(cacheKey)
+  if (cached) return cached
+  const shared = nacl.box.before(theirPubKey, mySecretKey)
+  sharedKeyCache.set(cacheKey, shared)
+  return shared
+}
+
+/**
+ * Encrypt plaintext with a shared symmetric key (XSalsa20-Poly1305 via nacl.secretbox).
+ */
+export function encryptWithSharedKey(
+  plaintext: string,
+  sharedKey: Uint8Array
+): { ciphertext: Uint8Array; nonce: Uint8Array } {
+  const nonce = nacl.randomBytes(nacl.secretbox.nonceLength)
+  const messageBytes = new TextEncoder().encode(plaintext)
+  const ciphertext = nacl.secretbox(messageBytes, nonce, sharedKey)
+  if (!ciphertext) throw new Error('Encryption failed')
+  return { ciphertext, nonce }
+}
+
+/**
+ * Decrypt ciphertext with a shared symmetric key.
+ */
+export function decryptWithSharedKey(
+  ciphertext: Uint8Array,
+  nonce: Uint8Array,
+  sharedKey: Uint8Array
+): string | null {
+  const plaintext = nacl.secretbox.open(ciphertext, nonce, sharedKey)
+  if (!plaintext) return null
+  return new TextDecoder().decode(plaintext)
+}
+
+/**
+ * Encode a v2 DM note (ECDH shared-key encryption, no ephemeral key needed).
+ */
+export function encodeDMNoteV2(
+  ciphertext: Uint8Array,
+  nonce: Uint8Array
+): Uint8Array {
+  const payload = {
+    app: 'messagevault',
+    type: 'dm',
+    v: 2,
+    ct: uint8ToBase64(ciphertext),
+    n: uint8ToBase64(nonce),
+  }
+  return new TextEncoder().encode(`messagevault:${JSON.stringify(payload)}`)
+}
+
+/**
+ * One-shot ECDH encrypt: derive shared key from peer's public key and my secret key,
+ * then encrypt and encode as a v2 note.
+ */
+export function encryptForPeer(
+  plaintext: string,
+  receiverPubKeyB64: string,
+  mySecretKey: Uint8Array
+): Uint8Array {
+  const receiverPubKey = base64ToUint8(receiverPubKeyB64)
+  const sharedKey = deriveSharedKey(receiverPubKey, mySecretKey)
+  const { ciphertext, nonce } = encryptWithSharedKey(plaintext, sharedKey)
+  return encodeDMNoteV2(ciphertext, nonce)
+}
+
+/**
+ * Universal DM decrypt: detects v1 (has `ek` field) vs v2 (has `v: 2`) and uses
+ * the appropriate decryption method.
+ *
+ * For v1: uses ephemeral public key from the message (only receiver can decrypt).
+ * For v2: derives ECDH shared key from peer's public key (both parties can decrypt).
+ */
+export function decryptDM(
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  payload: any,
+  mySecretKey: Uint8Array,
+  peerPubKeyB64?: string
+): string | null {
+  const { ct, n } = payload
+  if (!ct || !n) return null
+
+  if (payload.v === 2) {
+    // v2: ECDH shared key decryption
+    if (!peerPubKeyB64) return null
+    const peerPubKey = base64ToUint8(peerPubKeyB64)
+    const sharedKey = deriveSharedKey(peerPubKey, mySecretKey)
+    return decryptWithSharedKey(base64ToUint8(ct), base64ToUint8(n), sharedKey)
+  }
+
+  // v1: ephemeral key decryption
+  const { ek } = payload
+  if (!ek) return null
+  return decryptMessage(base64ToUint8(ct), base64ToUint8(n), base64ToUint8(ek), mySecretKey)
+}
+
 // --- Base64 helpers ---
 
 export function uint8ToBase64(bytes: Uint8Array): string {

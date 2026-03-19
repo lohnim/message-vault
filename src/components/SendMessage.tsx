@@ -4,7 +4,7 @@ import { useState, useEffect, useRef } from 'react'
 import { useWallet } from '@txnlab/use-wallet-react'
 import algosdk from 'algosdk'
 import { algodClient, fetchRegistration, fetchKnownSenders, type KnownContact } from '@/lib/algorand'
-import { encryptForRegisteredKey } from '@/lib/crypto'
+import { encryptForPeer, encryptForRegisteredKey, loadKeypair } from '@/lib/crypto'
 import { shortenAddress } from '@/lib/types'
 
 const MAX_MESSAGE_LENGTH = 600
@@ -53,7 +53,11 @@ export default function SendMessage() {
         throw new Error('Recipient has not enabled messaging yet. They need to register first.')
       }
 
-      const note = encryptForRegisteredKey(text.trim(), reg.pk)
+      // Use ECDH v2 encryption if we have a local keypair, otherwise fall back to v1
+      const localKp = activeAddress ? loadKeypair(activeAddress) : null
+      const note = localKp
+        ? encryptForPeer(text.trim(), reg.pk, localKp.secretKey)
+        : encryptForRegisteredKey(text.trim(), reg.pk)
 
       if (note.length > 1024) {
         throw new Error('Message too long for a single transaction note.')
