@@ -1,4 +1,5 @@
 import algosdk from 'algosdk'
+import { fetchRegistrationFromContract } from './registry'
 
 const algodServer = process.env.NEXT_PUBLIC_ALGOD_SERVER || 'https://mainnet-api.algonode.cloud'
 const algodPort = process.env.NEXT_PUBLIC_ALGOD_PORT || '443'
@@ -67,13 +68,29 @@ export async function fetchTransactionsByAddress(address: string, limit = 50) {
 export interface Registration {
   pk: string        // encryption public key (base64)
   name?: string     // optional username
+  source?: 'contract' | 'hub'  // where the registration was found
 }
 
 /**
  * Fetch the most recent registration for an address.
- * Returns the latest registration (users can re-register to update username).
+ * Tries smart contract box read first, falls back to hub-address indexer query.
  */
 export async function fetchRegistration(address: string): Promise<Registration | null> {
+  // Try contract first
+  const contractReg = await fetchRegistrationFromContract(algodClient, address)
+  if (contractReg) return { ...contractReg, source: 'contract' }
+
+  // Fallback: hub-address indexer query (legacy registrations)
+  const hubReg = await fetchRegistrationFromHub(address)
+  if (hubReg) return { ...hubReg, source: 'hub' }
+
+  return null
+}
+
+/**
+ * Legacy: fetch registration from hub-address indexer query.
+ */
+async function fetchRegistrationFromHub(address: string): Promise<Registration | null> {
   try {
     let nextToken: string | undefined
     const MAX_PAGES = 10
@@ -237,6 +254,17 @@ export async function fetchAllGlobalTransactions(): Promise<GlobalFeedResult> {
 
   // Sort newest first
   allTxns.sort((a, b) => b.timestamp - a.timestamp)
+
+  // Supplement with contract-based registrations for addresses missing from hub
+  const allAddrs = new Set(allTxns.map(t => t.from))
+  const missingAddrs = [...allAddrs].filter(a => !registrations.has(a))
+  if (missingAddrs.length > 0) {
+    const contractRegs = await fetchRegistrations(missingAddrs)
+    for (const [addr, reg] of contractRegs) {
+      registrations.set(addr, reg)
+    }
+  }
+
   return { txns: allTxns, registrations }
 }
 

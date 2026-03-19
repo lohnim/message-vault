@@ -4,8 +4,9 @@ import { useState, useCallback } from 'react'
 import { useWallet } from '@txnlab/use-wallet-react'
 import algosdk from 'algosdk'
 import nacl from 'tweetnacl'
-import { algodClient, HUB_ADDRESS, fetchRegistration } from '@/lib/algorand'
-import { deriveEncryptionKeypair, encodeRegisterNote } from '@/lib/crypto'
+import { algodClient, fetchRegistration } from '@/lib/algorand'
+import { deriveEncryptionKeypair } from '@/lib/crypto'
+import { registerOnContract } from '@/lib/registry'
 
 interface EncryptionState {
   keypair: nacl.BoxKeyPair | null
@@ -37,9 +38,9 @@ export function useEncryption() {
         activeAddress
       )
 
-      // Check if already registered
+      // Check if already registered on contract
       const existing = await fetchRegistration(activeAddress)
-      const registered = existing !== null
+      const registered = existing?.source === 'contract'
 
       setState({ keypair, registered, loading: false, error: null })
     } catch (err: unknown) {
@@ -56,20 +57,12 @@ export function useEncryption() {
 
     setState((s) => ({ ...s, loading: true, error: null }))
     try {
-      const note = encodeRegisterNote(state.keypair.publicKey)
-      const suggestedParams = await algodClient.getTransactionParams().do()
-
-      const txn = algosdk.makePaymentTxnWithSuggestedParamsFromObject({
-        sender: activeAddress,
-        receiver: HUB_ADDRESS,
-        amount: 0,
-        suggestedParams,
-        note,
-      })
-
-      const atc = new algosdk.AtomicTransactionComposer()
-      atc.addTransaction({ txn, signer: transactionSigner })
-      await atc.execute(algodClient, 4)
+      await registerOnContract(
+        algodClient,
+        transactionSigner,
+        activeAddress,
+        state.keypair.publicKey
+      )
 
       setState((s) => ({ ...s, registered: true, loading: false }))
     } catch (err: unknown) {

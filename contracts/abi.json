@@ -1,0 +1,70 @@
+{
+  "name": "MessageVaultRegistry",
+  "methods": [
+    {
+      "name": "register",
+      "args": [
+        {
+          "type": "byte[32]",
+          "name": "pk"
+        },
+        {
+          "type": "string",
+          "name": "username"
+        }
+      ],
+      "returns": {
+        "type": "void"
+      },
+      "desc": "Register or update encryption public key and username."
+    },
+    {
+      "name": "get_public_key",
+      "args": [
+        {
+          "type": "address",
+          "name": "addr"
+        }
+      ],
+      "returns": {
+        "type": "byte[]"
+      },
+      "desc": "Read the encryption public key for an address."
+    },
+    {
+      "name": "get_username",
+      "args": [
+        {
+          "type": "address",
+          "name": "addr"
+        }
+      ],
+      "returns": {
+        "type": "string"
+      },
+      "desc": "Read the username for an address."
+    },
+    {
+      "name": "deregister",
+      "args": [],
+      "returns": {
+        "type": "void"
+      },
+      "desc": "Deregister: delete sender's box and refund MBR."
+    },
+    {
+      "name": "is_registered",
+      "args": [
+        {
+          "type": "address",
+          "name": "addr"
+        }
+      ],
+      "returns": {
+        "type": "bool"
+      },
+      "desc": "Check if an address has registered."
+    }
+  ],
+  "networks": {}
+}

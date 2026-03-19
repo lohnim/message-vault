@@ -2,8 +2,8 @@
 
 import { useState, useCallback } from 'react'
 import nacl from 'tweetnacl'
-import { fetchIncomingDMs } from '@/lib/algorand'
-import { decryptMessage, base64ToUint8 } from '@/lib/crypto'
+import { fetchIncomingDMs, fetchRegistrations } from '@/lib/algorand'
+import { decryptDM } from '@/lib/crypto'
 import { APP_PREFIX } from '@/lib/types'
 
 export interface DecryptedDM {
@@ -33,6 +33,17 @@ export function useInbox(keypair: nacl.BoxKeyPair | null) {
     try {
       const result = await fetchIncomingDMs(address)
       const txns = result.transactions || []
+
+      // Collect unique sender addresses for public key lookup
+      const senderAddrs = new Set<string>()
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      for (const txn of txns as any[]) {
+        if (txn.sender) senderAddrs.add(txn.sender as string)
+      }
+
+      // Fetch sender registrations (needed for v2 ECDH decryption + usernames)
+      const senderRegs = await fetchRegistrations(Array.from(senderAddrs))
+
       const messages: DecryptedDM[] = []
 
       // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -48,11 +59,9 @@ export function useInbox(keypair: nacl.BoxKeyPair | null) {
           const parsed = JSON.parse(json)
           if (parsed.type !== 'dm') continue
 
-          const ciphertext = base64ToUint8(parsed.ct)
-          const nonce = base64ToUint8(parsed.n)
-          const ephemeralPubKey = base64ToUint8(parsed.ek)
-
-          const text = decryptMessage(ciphertext, nonce, ephemeralPubKey, keypair.secretKey)
+          // Use universal decrypt: handles both v1 (ek field) and v2 (ECDH)
+          const senderReg = senderRegs.get(txn.sender as string)
+          const text = decryptDM(parsed, keypair.secretKey, senderReg?.pk)
 
           messages.push({
             txId: txn.id as string,
