@@ -266,54 +266,94 @@ body {
   gap: 8px;
 }
 
-.wallet-groups {
+.wallet-selector {
+  max-width: 480px;
+  margin: 0 auto 32px;
+}
+
+.wallet-chains {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 20px;
   width: 100%;
 }
 
-.wallet-group {
+.wallet-chain-section {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.wallet-chain-header {
   display: flex;
   align-items: center;
-  gap: 10px;
+  gap: 8px;
+}
+
+.wallet-chain-name {
+  font-size: 0.9rem;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.wallet-chain-wallets {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.wallet-card {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  width: 100%;
   background: var(--bg-card);
   border: 1px solid var(--border);
-  border-radius: 8px;
-  padding: 10px 14px;
-}
-
-.wallet-group-label {
-  font-size: 0.8rem;
+  border-radius: 10px;
+  padding: 12px 16px;
+  cursor: pointer;
+  transition: all 0.15s;
+  color: var(--text);
+  font-family: inherit;
+  font-size: 0.9rem;
   font-weight: 600;
-  color: var(--text-dim);
-  min-width: 70px;
 }
 
-.wallet-group-buttons {
+.wallet-card:hover:not(:disabled) {
+  border-color: var(--accent);
+  background: var(--bg-input);
+}
+
+.wallet-card:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.wallet-card-logo {
+  flex-shrink: 0;
+  width: 32px;
+  height: 32px;
   display: flex;
-  gap: 6px;
-  flex-wrap: wrap;
+  align-items: center;
+  justify-content: center;
+  border-radius: 8px;
+  overflow: hidden;
 }
 
-.wallet-group-buttons .btn {
-  padding: 6px 12px;
-  font-size: 0.8rem;
+.wallet-card-name {
+  flex: 1;
+  text-align: left;
 }
 
-.wallet-group-disabled {
+.wallet-chain-disabled {
   opacity: 0.5;
 }
 
 .wallet-group-coming-soon {
-  font-size: 0.8rem;
+  font-size: 0.75rem;
   color: var(--text-dim);
   font-style: italic;
-}
-
-.wallet-selector {
-  max-width: 420px;
-  margin: 0 auto 32px;
+  margin-left: auto;
 }
 
 .wallet-chain-badge {
