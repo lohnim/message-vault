@@ -267,7 +267,6 @@ body {
 }
 
 .wallet-selector {
-  max-width: 900px;
   margin: 0 auto 32px;
 }
 
@@ -279,7 +278,7 @@ body {
 }
 
 .wallet-column {
-  flex: 1;
+  width: 20vw;
   display: flex;
   flex-direction: column;
   gap: 8px;
